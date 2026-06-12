@@ -1,5 +1,5 @@
 import prisma from "../prisma";
-import { io } from "../index";
+import { io } from "../socket";
 
 /* ---------------------------------------------------
    Sync Prediction Points → League Points

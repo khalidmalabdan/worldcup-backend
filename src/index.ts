@@ -29,6 +29,7 @@ import { computeStandings } from "./utils/standings";
 
 // Prisma client
 import prisma from "./prisma";
+import { setupSocket } from "./socket";
 
 // League scoring engine
 import { updateAllLeaguePoints } from "./services/leagueScoringService";
@@ -44,9 +45,7 @@ async function getAllMatches() {
 const app = express();
 const server = http.createServer(app);
 
-export const io = new Server(server, {
-  cors: { origin: "*" }
-});
+setupSocket(server);
 
 app.use(cors());
 app.use(express.json());
@@ -71,17 +70,6 @@ app.use("/matches", matchTimelineRoutes);
 /* ---------------------------------------------------
    SOCKET.IO
 --------------------------------------------------- */
-io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
-
-  socket.on("join:match", (matchId) => {
-    socket.join(`match:${matchId}`);
-  });
-
-  socket.on("join:league", (leagueId) => {
-    socket.join(`league:${leagueId}`);
-  });
-});
 
 /* ---------------------------------------------------
    STANDINGS ENDPOINT
