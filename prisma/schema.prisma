@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -73,8 +73,8 @@ model League {
   id        String   @id @default(uuid())
   name      String
   code      String   @unique
-  logo      String?              // ⭐ NEW
-  isPrivate Boolean  @default(false) // ⭐ NEW
+  logo      String?
+  isPrivate Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
