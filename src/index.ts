@@ -50,6 +50,10 @@ setupSocket(server);
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (_req, res) => {
+  res.json({ success: true, message: "World Cup backend is running" });
+});
+
 /* ---------------------------------------------------
    REGISTER ROUTES
 --------------------------------------------------- */
