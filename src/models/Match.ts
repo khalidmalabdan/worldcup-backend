@@ -1,61 +1,101 @@
-import { v4 as uuid } from "uuid";
+import prisma from "../prisma";
 
-export type MatchStatus = "upcoming" | "live" | "finished";
-
-// ⭐ NEW — Event structure for goals, assists, etc.
+/* ---------------------------------------------------
+   ⭐ Local Match Types (safe for scoring + API)
+--------------------------------------------------- */
 export interface MatchEvent {
   minute: number;
-  type: string;        // "REGULAR", "PENALTY", "OWN_GOAL", etc.
-  scorer?: string;     // Player name
-  assist?: string;     // Player name
-  team?: string;       // Team name
+  type?: string;
+  scorer?: string;
+  assist?: string;
 }
 
-export interface Match {
-  id: string;              // internal ID
-  externalId: number;      // Football-Data.org match ID
+export interface MatchModel {
+  id: string;
+  externalId: number;
   homeTeam: string;
   awayTeam: string;
-  homeScore: number;
-  awayScore: number;
-  kickoffTime: number;     // timestamp in ms
-
-  // ⭐ NEW — ISO string for frontend
+  homeScore: number | null;
+  awayScore: number | null;
+  kickoffTime: Date;
   matchDate: string;
-
-  status: MatchStatus;
-
-  // Logos + Flags
+  status: string;
+  scored: boolean;
   homeLogo?: string;
   awayLogo?: string;
   homeFlag?: string;
   awayFlag?: string;
-
-  // ⭐ NEW — Scorers + Assists + Goal Events
-  events?: MatchEvent[];
+  events: MatchEvent[];
+  homePlayers: string[];
+  awayPlayers: string[];
 }
 
-const matches: Match[] = [];
-
-// -----------------------------
-// GETTERS
-// -----------------------------
-export function getAllMatches() {
-  return matches;
+/* ---------------------------------------------------
+   ⭐ Helper: parse JSON fields
+--------------------------------------------------- */
+function mapDbMatch(db: any): MatchModel {
+  return {
+    ...db,
+    events: db.events ? JSON.parse(db.events) : [],
+    homePlayers: db.homePlayers ? JSON.parse(db.homePlayers) : [],
+    awayPlayers: db.awayPlayers ? JSON.parse(db.awayPlayers) : [],
+  };
 }
 
-export function getMatchById(id: string) {
-  return matches.find((m) => m.id === id);
+/* ---------------------------------------------------
+   ⭐ GET ALL MATCHES
+--------------------------------------------------- */
+export async function getAllMatches(): Promise<MatchModel[]> {
+  const matches = await prisma.match.findMany({
+    include: { predictions: true },
+    orderBy: { kickoffTime: "asc" },
+  });
+
+  return matches.map(mapDbMatch);
 }
 
-export function getMatchByExternalId(externalId: number) {
-  return matches.find((m) => m.externalId === externalId);
+/* ---------------------------------------------------
+   ⭐ GET MATCH BY ID
+--------------------------------------------------- */
+export async function getMatchById(id: string): Promise<MatchModel | null> {
+  const match = await prisma.match.findUnique({
+    where: { id },
+    include: { predictions: true },
+  });
+
+  return match ? mapDbMatch(match) : null;
 }
 
-// -----------------------------
-// CREATE MATCH (from API sync)
-// -----------------------------
-export function createMatch(data: {
+/* ---------------------------------------------------
+   ⭐ GET MATCH BY EXTERNAL ID
+--------------------------------------------------- */
+export async function getMatchByExternalId(
+  externalId: number
+): Promise<MatchModel | null> {
+  const match = await prisma.match.findUnique({
+    where: { externalId },
+    include: { predictions: true },
+  });
+
+  return match ? mapDbMatch(match) : null;
+}
+
+/* ---------------------------------------------------
+   ⭐ GET FINISHED MATCHES
+--------------------------------------------------- */
+export async function getFinishedMatches(): Promise<MatchModel[]> {
+  const matches = await prisma.match.findMany({
+    where: { status: "finished" },
+    include: { predictions: true },
+  });
+
+  return matches.map(mapDbMatch);
+}
+
+/* ---------------------------------------------------
+   ⭐ CREATE MATCH (API Sync)
+--------------------------------------------------- */
+export async function createMatch(data: {
   externalId: number;
   homeTeam: string;
   awayTeam: string;
@@ -64,61 +104,78 @@ export function createMatch(data: {
   awayLogo?: string;
   homeFlag?: string;
   awayFlag?: string;
-  events?: MatchEvent[];
+  events?: any[];
+  homePlayers: string[];
+  awayPlayers: string[];
 }) {
-  const match: Match = {
-    id: uuid(),
-    externalId: data.externalId,
-    homeTeam: data.homeTeam,
-    awayTeam: data.awayTeam,
-    homeScore: 0,
-    awayScore: 0,
-    kickoffTime: data.kickoffTime,
+  const match = await prisma.match.create({
+    data: {
+      externalId: data.externalId,
+      homeTeam: data.homeTeam,
+      awayTeam: data.awayTeam,
+      homeScore: 0,
+      awayScore: 0,
 
-    // ⭐ NEW — ISO string for frontend
-    matchDate: new Date(data.kickoffTime).toISOString(),
+      kickoffTime: new Date(data.kickoffTime),
+      matchDate: new Date(data.kickoffTime).toISOString(),
 
-    status: "upcoming",
+      status: "upcoming",
+      scored: false,
 
-    homeLogo: data.homeLogo,
-    awayLogo: data.awayLogo,
-    homeFlag: data.homeFlag,
-    awayFlag: data.awayFlag,
+      homeLogo: data.homeLogo,
+      awayLogo: data.awayLogo,
+      homeFlag: data.homeFlag,
+      awayFlag: data.awayFlag,
 
-    // ⭐ NEW — initialize events
-    events: data.events ?? [],
-  };
+      events: JSON.stringify(data.events ?? []),
+      homePlayers: JSON.stringify(data.homePlayers ?? []),
+      awayPlayers: JSON.stringify(data.awayPlayers ?? []),
+    },
+  });
 
-  matches.push(match);
-  return match;
+  return mapDbMatch(match);
 }
 
-// -----------------------------
-// LOCK CHECK (for predictions)
-// -----------------------------
-export function isMatchLocked(match: Match): boolean {
-  return Date.now() >= match.kickoffTime;
-}
-
-// -----------------------------
-// UPDATE SCORE (used by sync)
-// -----------------------------
-export function updateMatchScore(
+/* ---------------------------------------------------
+   ⭐ UPDATE MATCH SCORE
+--------------------------------------------------- */
+export async function updateMatchScore(
   id: string,
   homeScore: number,
   awayScore: number
 ) {
-  const match = getMatchById(id);
-  if (!match) return null;
+  const match = await prisma.match.update({
+    where: { id },
+    data: {
+      homeScore,
+      awayScore,
+      status: "finished",
+    },
+  });
 
-  match.homeScore = homeScore;
-  match.awayScore = awayScore;
+  return mapDbMatch(match);
+}
 
-  if (Date.now() >= match.kickoffTime && match.status !== "finished") {
-    match.status = "live";
-  }
+/* ---------------------------------------------------
+   ⭐ MARK MATCH AS SCORED
+--------------------------------------------------- */
+export async function markMatchAsScored(id: string) {
+  const match = await prisma.match.update({
+    where: { id },
+    data: { scored: true },
+  });
 
-  match.status = "finished";
+  return mapDbMatch(match);
+}
 
-  return match;
+/* ---------------------------------------------------
+   ⭐ CLEAR SCORED FLAG
+--------------------------------------------------- */
+export async function clearMatchScoredFlag(id: string) {
+  const match = await prisma.match.update({
+    where: { id },
+    data: { scored: false },
+  });
+
+  return mapDbMatch(match);
 }

@@ -1,6 +1,5 @@
-import { Match } from "../models/Match";
+import { MatchModel } from "../models/Match";
 
-export function isMatchLocked(match: Match): boolean {
-  const now = Date.now();
-  return now >= match.kickoffTime;
+export function isMatchLocked(match: MatchModel): boolean {
+  return Date.now() >= new Date(match.kickoffTime).getTime();
 }

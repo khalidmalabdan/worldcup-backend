@@ -1,99 +1,134 @@
 import { Router } from "express";
-import {
-  createPrediction,
-  getPrediction,
-  updatePrediction,
-} from "../models/Predictions";
-import { getMatchById } from "../models/Match";
-import { io } from "../socket";
+import requireAuth, { AuthRequest } from "../middleware/authMiddleware";
 
-// ⭐ NEW — Double Point weekly limit tracker
+import { getMatchById } from "../models/Match";
+import {
+  upsertPrediction,
+  getPredictionsByMatch,
+} from "../models/Predictions";
+
 import {
   canUseDoublePoint,
   recordDoublePointUse,
   getRemainingDoublePoints,
 } from "../services/doublePointTracker";
 
+import { calculatePredictionPoints } from "../services/scoring";
+import { io } from "../socket";
+
 const router = Router();
 
-// ⭐ NEW — Get remaining Double Point uses for this week
-router.get("/doublepoint/remaining/:userId", (req, res) => {
-  const { userId } = req.params;
-
+/* ---------------------------------------------------
+   ⭐ GET REMAINING DOUBLE POINT USES
+--------------------------------------------------- */
+router.get("/doublepoint/remaining", requireAuth, (req: AuthRequest, res) => {
+  const userId = req.user!.id;
   const remaining = getRemainingDoublePoints(userId);
 
   res.json({
     userId,
     remaining,
     totalAllowed: 2,
-    message: `Double Point remaining: ${remaining} / 2`,
   });
 });
 
-// GET my prediction for a match
-router.get("/:matchId/:userId", (req, res) => {
-  const { matchId, userId } = req.params;
-  const prediction = getPrediction(userId, matchId);
+/* ---------------------------------------------------
+   ⭐ GET USER PREDICTION FOR A MATCH
+--------------------------------------------------- */
+router.get("/:matchId", requireAuth, async (req: AuthRequest, res) => {
+  const matchId =
+    typeof req.params.matchId === "string"
+      ? req.params.matchId
+      : req.params.matchId[0];
+
+  const userId = req.user!.id;
+
+  const match = await getMatchById(matchId);
+  if (!match) return res.status(404).json({ message: "Match not found" });
+
+  const predictions = await getPredictionsByMatch(matchId);
+  const prediction = predictions.find((p) => p.userId === userId);
+
   res.json(prediction || null);
 });
 
-// CREATE or UPDATE prediction
-router.post("/:matchId", (req, res) => {
-  const { matchId } = req.params;
+/* ---------------------------------------------------
+   ⭐ CREATE OR UPDATE PREDICTION
+--------------------------------------------------- */
+router.post("/:matchId", requireAuth, async (req: AuthRequest, res) => {
+  const matchId =
+    typeof req.params.matchId === "string"
+      ? req.params.matchId
+      : req.params.matchId[0];
+
+  const userId = req.user!.id;
+
   const {
-    userId,
-    predictedHomeScore,
-    predictedAwayScore,
-    predictedScorers,
-    predictedAssists,
-    predictedGoalMinutes,
-    doublePoint, // ⭐ NEW
+    homeScore,
+    awayScore,
+    scorers = [],
+    assisters = [],
+    goalMinutes = [],
+    doublePoint = false,
   } = req.body;
 
-  const match = getMatchById(matchId);
+  const match = await getMatchById(matchId);
   if (!match) return res.status(404).json({ message: "Match not found" });
 
-  // ⭐ Double Point weekly limit check
+  // Cannot predict finished matches
+  if (match.status === "finished") {
+    return res.status(400).json({ error: "Match already finished" });
+  }
+
+  /* ---------------------------------------------------
+     ⭐ DOUBLE POINT LIMIT CHECK
+  --------------------------------------------------- */
   if (doublePoint) {
     if (!canUseDoublePoint(userId)) {
       return res.status(400).json({
         error: "You can only use Double Point twice per week.",
       });
     }
-
-    // Record usage for this week
     recordDoublePointUse(userId);
   }
 
-  const existing = getPrediction(userId, matchId);
-
-  if (existing) {
-    const updated = updatePrediction(userId, matchId, {
-      predictedHomeScore,
-      predictedAwayScore,
-      predictedScorers,
-      predictedAssists,
-      predictedGoalMinutes, // ⭐ NEW
-      doublePoint,          // ⭐ NEW
-    });
-
-    io.to(`match:${matchId}`).emit("prediction:update", updated);
-    return res.json(updated);
-  }
-
-  const newPrediction = createPrediction({
+  /* ---------------------------------------------------
+     ⭐ UPSERT PREDICTION
+  --------------------------------------------------- */
+  const saved = await upsertPrediction({
     userId,
     matchId,
-    predictedHomeScore,
-    predictedAwayScore,
-    predictedScorers,
-    predictedAssists,
-    predictedGoalMinutes, // ⭐ NEW
-    doublePoint,          // ⭐ NEW
+    homeScore: Number(homeScore),
+    awayScore: Number(awayScore),
+    scorers: Array.isArray(scorers) ? scorers : [],
+    assisters: Array.isArray(assisters) ? assisters : [],
+    goalMinutes: Array.isArray(goalMinutes)
+      ? goalMinutes.map((n: any) => Number(n))
+      : [],
+    doublePoint,
   });
 
-  io.to(`match:${matchId}`).emit("prediction:new", newPrediction);
-  res.status(201).json(newPrediction);
+  /* ---------------------------------------------------
+     ⭐ IF MATCH IS FINISHED → SCORE IMMEDIATELY
+  --------------------------------------------------- */
+  let points: number | null = null;
+
+  if (match.status === "finished") {
+    points = calculatePredictionPoints(match, saved);
+  }
+
+  /* ---------------------------------------------------
+     ⭐ SOCKET EMIT
+  --------------------------------------------------- */
+  io.to(`match:${matchId}`).emit("prediction:update", {
+    ...saved,
+    points,
+  });
+
+  res.status(201).json({
+    ...saved,
+    points,
+  });
 });
 
 export default router;

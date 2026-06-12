@@ -1,26 +1,46 @@
-import { v4 as uuid } from "uuid";
-
-export type UserRole = "user" | "admin";
+import crypto from "crypto";
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
+  password: string;   // ⭐ required for login
+  avatar?: string;
 }
 
 const users: User[] = [];
 
-export function createUser(name: string, email: string, role: UserRole = "user"): User {
-  const user: User = { id: uuid(), name, email, role };
+/* ---------------------------------------------------
+   ⭐ CREATE USER
+--------------------------------------------------- */
+export function createUser(
+  name: string,
+  email: string,
+  password: string,
+  avatar?: string
+) {
+  const user: User = {
+    id: crypto.randomUUID(),
+    name,
+    email,
+    password,   // ⭐ store hashed password if you want later
+    avatar,
+  };
+
   users.push(user);
   return user;
 }
 
+/* ---------------------------------------------------
+   ⭐ GET USER BY ID
+--------------------------------------------------- */
 export function getUserById(id: string) {
-  return users.find((u) => u.id === id);
+  return users.find((u) => u.id === id) || null;
 }
 
-export function getAllUsers() {
-  return users;
+/* ---------------------------------------------------
+   ⭐ GET USER BY EMAIL (needed for login)
+--------------------------------------------------- */
+export function getUserByEmail(email: string) {
+  return users.find((u) => u.email === email) || null;
 }

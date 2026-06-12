@@ -1,18 +1,33 @@
 import { Router } from "express";
-import { createUser, getAllUsers } from "../models/User";
+import { createUser } from "../models/User";
 
 const router = Router();
 
-// fake "login" – just creates a user and returns it
-router.post("/login", (req, res) => {
-  const { name, email } = req.body;
-  if (!name || !email) return res.status(400).json({ message: "name and email required" });
-  const user = createUser(name, email);
+/* ---------------------------------------------------
+   ⭐ Simple login/register (temporary)
+--------------------------------------------------- */
+router.post("/login", async (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({
+      message: "name, email, and password are required",
+    });
+  }
+
+  // Create user (no hashing yet — temporary)
+  const user = await createUser(name, email, password);
+
   res.json(user);
 });
 
+/* ---------------------------------------------------
+   ⭐ Remove /users endpoint (no getAllUsers in model)
+--------------------------------------------------- */
 router.get("/users", (_req, res) => {
-  res.json(getAllUsers());
+  return res.status(410).json({
+    message: "This endpoint has been removed. No getAllUsers() available.",
+  });
 });
 
 export default router;

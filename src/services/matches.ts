@@ -1,7 +1,9 @@
 // worldcup-backend/src/services/matches.ts
 
-import { storedMatches } from "./footballData";
+import prisma from "../prisma";
 
 export async function getAllMatches() {
-  return storedMatches;
+  return prisma.match.findMany({
+    orderBy: { kickoffTime: "asc" },
+  });
 }

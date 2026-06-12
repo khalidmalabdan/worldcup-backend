@@ -1,14 +1,11 @@
 // worldcup-backend/src/utils/standings.ts
 import { GROUPS } from "../config/groups";
+import { Match } from "@prisma/client";
 
-export interface Match {
-  id: string;
-  homeTeam: string;
-  awayTeam: string;
-  homeScore?: number;
-  awayScore?: number;
-  status?: "upcoming" | "live" | "finished";
-}
+// Prisma Match + predictions relation
+export type MatchWithPredictions = Match & {
+  predictions: any[];
+};
 
 export interface TeamStanding {
   team: string;
@@ -31,10 +28,12 @@ function getGroupForTeam(team: string): string | null {
   return null;
 }
 
-export function computeStandings(matches: Match[]): GroupStandings {
+export function computeStandings(
+  matches: MatchWithPredictions[]
+): GroupStandings {
   const standings: Record<string, Record<string, TeamStanding>> = {};
 
-  // init all teams with zero stats
+  // Initialize all teams
   for (const [group, teams] of Object.entries(GROUPS)) {
     standings[group] = standings[group] || {};
     for (const team of teams) {
@@ -52,17 +51,14 @@ export function computeStandings(matches: Match[]): GroupStandings {
     }
   }
 
+  // Process finished matches
   for (const match of matches) {
     if (match.status !== "finished") continue;
-    if (
-      match.homeScore === undefined ||
-      match.awayScore === undefined
-    ) {
-      continue;
-    }
+    if (match.homeScore == null || match.awayScore == null) continue;
 
     const homeGroup = getGroupForTeam(match.homeTeam);
     const awayGroup = getGroupForTeam(match.awayTeam);
+
     if (!homeGroup || !awayGroup || homeGroup !== awayGroup) continue;
 
     const group = homeGroup;
@@ -96,6 +92,7 @@ export function computeStandings(matches: Match[]): GroupStandings {
     }
   }
 
+  // Sort teams inside each group
   const result: GroupStandings = {};
   for (const [group, teamsMap] of Object.entries(standings)) {
     const teams = Object.values(teamsMap).sort((a, b) => {
