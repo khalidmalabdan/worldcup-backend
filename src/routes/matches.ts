@@ -34,10 +34,7 @@ router.get("/", async (_req, res) => {
   res.json(matches);
 });
 
-/* ---------------------------------------------------
-   ⭐ GET TODAY'S MATCHES
---------------------------------------------------- */
-router.get("/day/today", async (req: AuthRequest, res) => {
+async function getTodaysMatches(req: AuthRequest) {
   const allMatches = await getAllMatches();
 
   const today = new Date();
@@ -108,7 +105,16 @@ router.get("/day/today", async (req: AuthRequest, res) => {
   }
 
   todaysMatches.sort((a, b) => a.kickoff - b.kickoff);
+  return todaysMatches;
+}
 
+router.get("/day/today", async (req: AuthRequest, res) => {
+  const todaysMatches = await getTodaysMatches(req);
+  res.json(todaysMatches);
+});
+
+router.get("/today", async (req: AuthRequest, res) => {
+  const todaysMatches = await getTodaysMatches(req);
   res.json(todaysMatches);
 });
 
