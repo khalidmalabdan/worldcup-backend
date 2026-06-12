@@ -8,7 +8,7 @@ import path from "path";
 import {
   getMatchByExternalId,
   createMatch,
-  updateMatchScore,
+  updateMatchScore
 } from "../models/Match";
 
 import { getPredictionsByMatch } from "../models/Predictions";
@@ -46,7 +46,7 @@ function writeCache(matches: any[]) {
 async function fetchWithRetry(url: string, retries = 3, delay = 2000) {
   try {
     return await axios.get(`${BASE_URL}${url}`, {
-      headers: { "X-Auth-Token": API_KEY },
+      headers: { "X-Auth-Token": API_KEY }
     });
   } catch (err: any) {
     const status = err.response?.status;
@@ -87,7 +87,7 @@ async function fetchWorldCupMatches() {
 }
 
 /* ---------------------------------------------------
-   ⭐ MAIN SYNC FUNCTION
+   ⭐ MAIN SYNC FUNCTION (CRASH-PROOF)
 --------------------------------------------------- */
 export async function syncMatches() {
   console.log("🔄 Running syncMatches()...");
@@ -101,16 +101,40 @@ export async function syncMatches() {
   console.log("📦 Total matches received:", apiMatches.length);
 
   for (const m of apiMatches) {
-    if (!m.utcDate || !m.homeTeam?.name || !m.awayTeam?.name) {
-      console.log("⏭ Skipping match with missing data:", m.id);
+    /* ---------------------------------------------------
+       ⭐ SAFETY CHECKS (prevent crashes)
+    --------------------------------------------------- */
+    if (!m.homeTeam?.name || !m.awayTeam?.name) {
+      console.log("⏭ Skipping match with missing team data:", m.id);
       continue;
     }
 
-    const kickoff = new Date(m.utcDate).getTime();
+    // Safe kickoff time
+    const kickoffRaw = m.utcDate || m.kickoffTime || null;
+    if (!kickoffRaw) {
+      console.log("⏭ Skipping match with missing kickoff time:", m.id);
+      continue;
+    }
+
+    const kickoff = new Date(kickoffRaw).getTime();
+    if (isNaN(kickoff)) {
+      console.log("⏭ Invalid kickoff date, skipping:", m.id);
+      continue;
+    }
+
     const existing = await getMatchByExternalId(m.id);
 
-    console.log("➡️ Processing match:", m.id, m.homeTeam.name, "vs", m.awayTeam.name);
+    console.log(
+      "➡️ Processing match:",
+      m.id,
+      m.homeTeam.name,
+      "vs",
+      m.awayTeam.name
+    );
 
+    /* ---------------------------------------------------
+       ⭐ Determine status
+    --------------------------------------------------- */
     const status =
       m.status === "FINISHED"
         ? "finished"
@@ -118,13 +142,16 @@ export async function syncMatches() {
         ? "live"
         : "upcoming";
 
+    /* ---------------------------------------------------
+       ⭐ Normalize events safely
+    --------------------------------------------------- */
     const events = Array.isArray(m.goals)
       ? m.goals.map((g) => ({
-          minute: g.minute,
-          type: g.type,
-          scorer: g.scorer?.name,
-          assist: g.assist?.name,
-          team: g.team?.name,
+          minute: g.minute ?? 0,
+          type: g.type ?? "unknown",
+          scorer: g.scorer?.name ?? null,
+          assist: g.assist?.name ?? null,
+          team: g.team?.name ?? null
         }))
       : [];
 
@@ -140,14 +167,14 @@ export async function syncMatches() {
         awayTeam: m.awayTeam.name,
         kickoffTime: kickoff,
 
-        homeLogo: m.homeTeam.crest,
-        awayLogo: m.awayTeam.crest,
-        homeFlag: m.homeTeam.area?.flag,
-        awayFlag: m.awayTeam.area?.flag,
+        homeLogo: m.homeTeam.crest ?? null,
+        awayLogo: m.awayTeam.crest ?? null,
+        homeFlag: m.homeTeam.area?.flag ?? null,
+        awayFlag: m.awayTeam.area?.flag ?? null,
 
         homePlayers: [],
         awayPlayers: [],
-        events,
+        events
       });
 
       continue;
@@ -159,8 +186,8 @@ export async function syncMatches() {
     if (status === "live") {
       const updated = await updateMatchScore(
         existing.id,
-        m.score.fullTime.home ?? 0,
-        m.score.fullTime.away ?? 0
+        m.score?.fullTime?.home ?? 0,
+        m.score?.fullTime?.away ?? 0
       );
 
       io.to(`match:${existing.id}`).emit("match:update", updated);
@@ -173,21 +200,21 @@ export async function syncMatches() {
     if (status === "finished" && existing.status !== "finished") {
       const updated = await updateMatchScore(
         existing.id,
-        m.score.fullTime.home,
-        m.score.fullTime.away
+        m.score?.fullTime?.home ?? 0,
+        m.score?.fullTime?.away ?? 0
       );
 
       const predictions = await getPredictionsByMatch(updated.id);
 
       const scored = predictions.map((p) => ({
         ...p,
-        points: calculatePredictionPoints(updated, p),
+        points: calculatePredictionPoints(updated, p)
       }));
 
       io.to(`match:${updated.id}`).emit("match:final", {
         match: updated,
         predictions: scored,
-        events,
+        events
       });
 
       const leagues = await recomputeLeaderboardsForMatch(updated);
